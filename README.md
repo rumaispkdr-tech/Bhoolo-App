@@ -60,6 +60,7 @@ The platform features a **unified single-entry login interface** at `/`:
 7. **Mobile-Responsive Side Navigation**: Full responsiveness across smartphones, tablets, and desktops with an animated hamburger drawer menu.
 8. **Progressive Web App (PWA)**: Installable as a standalone app on Android, iOS, Windows, and macOS with service worker offline caching.
 9. **Dhdc Work Tracker**: Admin audit log tracking every quiz creation, cohort assignment, exam unfreeze, and student submission.
+10. **Gemini AI Question & Exam Generator**: Admins can upload any syllabus/textbook PDF or text document, or paste notes, and Google Gemini AI automatically generates high-quality multiple-choice questions with 4 options, correct answer keys, and pedagogical explanations.
 
 ---
 

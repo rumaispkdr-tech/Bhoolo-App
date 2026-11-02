@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { 
   ClipboardList, Plus, HelpCircle, BookOpen, 
-  Users, Eye, Trash2, ArrowUpRight, Search 
+  Users, Eye, Trash2, ArrowUpRight, Search, Sparkles 
 } from 'lucide-react';
 import { AdminSidebar } from '@/components/admin/AdminSidebar';
 import { AdminHeader } from '@/components/admin/AdminHeader';
@@ -112,6 +112,13 @@ export default function AllAssessmentsPage() {
             </div>
 
             <div className="flex items-center gap-2">
+              <Link
+                href="/admin/assessments/create?ai=true"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-50 to-blue-50 text-indigo-700 hover:from-indigo-100 hover:to-blue-100 border border-indigo-200 text-xs font-bold transition shadow-xs"
+              >
+                <Sparkles className="w-4 h-4 text-indigo-600" />
+                <span>AI Generator</span>
+              </Link>
               <Link
                 href="/admin/assessments/create?type=quiz"
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 text-xs font-bold transition"

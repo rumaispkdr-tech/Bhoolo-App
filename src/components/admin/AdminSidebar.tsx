@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Users, FileSpreadsheet, PlusCircle, 
   HelpCircle, ClipboardList, CheckSquare, BarChart3, 
   Settings, LogOut, ChevronLeft, ChevronRight, Activity, 
-  Menu, X 
+  Menu, X, Sparkles
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -28,6 +28,7 @@ export function AdminSidebar() {
     { label: 'Excel Import', href: '/admin/students/import', icon: FileSpreadsheet },
     { label: 'Create Quiz', href: '/admin/assessments/create?type=quiz', icon: PlusCircle },
     { label: 'Create Exam', href: '/admin/assessments/create?type=exam', icon: HelpCircle },
+    { label: 'AI Generator', href: '/admin/assessments/create?ai=true', icon: Sparkles },
     { label: 'All Assessments', href: '/admin/assessments', icon: ClipboardList },
     { label: 'Assignments', href: '/admin/assignments', icon: CheckSquare },
     { label: 'Work Tracker', href: '/admin/tracker', icon: Activity },

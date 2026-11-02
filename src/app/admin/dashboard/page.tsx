@@ -6,7 +6,7 @@ import { motion } from 'framer-motion';
 import { 
   Users, HelpCircle, ClipboardCheck, Clock, TrendingUp, 
   PlusCircle, FileSpreadsheet, ArrowUpRight, CheckCircle2, 
-  ChevronRight, Calendar, BookOpen
+  ChevronRight, Calendar, BookOpen, Sparkles
 } from 'lucide-react';
 import { AdminSidebar } from '@/components/admin/AdminSidebar';
 import { AdminHeader } from '@/components/admin/AdminHeader';
@@ -122,6 +122,13 @@ export default function AdminDashboardPage() {
               <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Quick Actions:</span>
             </div>
             <div className="flex flex-wrap items-center gap-2.5">
+              <Link
+                href="/admin/assessments/create?ai=true"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition"
+              >
+                <Sparkles className="w-4 h-4 text-indigo-600" />
+                <span>AI Assessment Generator</span>
+              </Link>
               <Link
                 href="/admin/assessments/create?type=quiz"
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition"

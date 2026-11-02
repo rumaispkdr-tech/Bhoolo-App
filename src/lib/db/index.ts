@@ -791,6 +791,7 @@ class DatabaseEngine {
     if (this.state.auditLogs.length > 100) {
       this.state.auditLogs = this.state.auditLogs.slice(0, 100);
     }
+    this.save();
   }
 
   async listAuditLogs() {
