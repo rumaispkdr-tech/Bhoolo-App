@@ -67,8 +67,8 @@ The platform features a **unified single-entry login interface** at `/`:
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/rumaispkdr-tech/dhdc-quiz.git
-cd dhdc-quiz
+git clone https://github.com/rumaispkdr-tech/Bhoolo-App.git
+cd Bhoolo-App
 
 # 2. Install dependencies
 npm install
