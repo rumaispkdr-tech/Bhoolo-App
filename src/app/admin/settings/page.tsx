@@ -55,8 +55,17 @@ CREATE POLICY "Full Access to All" ON public.bhoolo_state
     try {
       setTestingConnection(true);
       setTestResult(null);
-      const res = await fetch('/api/admin/system/test-db');
-      const data = await res.json();
+      const res = await fetch('/api/admin/system/test-db', {
+        method: 'POST',
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data) {
+        setTestResult({
+          success: false,
+          message: data?.message || data?.error || `Server responded with HTTP ${res.status}. Please verify your Vercel Environment Variables.`,
+        });
+        return;
+      }
       setTestResult(data);
       await fetchStorageStatus();
     } catch (e: any) {

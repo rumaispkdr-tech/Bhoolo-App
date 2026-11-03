@@ -37,10 +37,26 @@ class DatabaseEngine {
     this.state = this.loadLocalFallback();
   }
 
+  private getSupabaseCredentials(): { url: string; key: string } {
+    const rawUrl = process.env.NEXT_PUBLIC_SUPABASE_URL 
+      || process.env.SUPABASE_URL 
+      || process.env.NEXT_PUBLIC_SUPABASE_PROJECT_URL 
+      || '';
+    const rawKey = process.env.SUPABASE_SERVICE_ROLE_KEY 
+      || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY 
+      || process.env.SUPABASE_ANON_KEY 
+      || process.env.NEXT_PUBLIC_SUPABASE_KEY 
+      || process.env.SUPABASE_KEY 
+      || '';
+
+    const url = rawUrl.trim().replace(/^["']|["']$/g, '');
+    const key = rawKey.trim().replace(/^["']|["']$/g, '');
+    return { url, key };
+  }
+
   private initSupabase(): SupabaseClient | null {
     if (this.supabaseClient) return this.supabaseClient;
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+    const { url, key } = this.getSupabaseCredentials();
     if (url && key && url.startsWith('http')) {
       try {
         this.supabaseClient = createClient(url, key, {
@@ -275,10 +291,8 @@ class DatabaseEngine {
   public async getStorageInfo() {
     await this.ensureLoaded();
 
-    const hasSupabase = !!(
-      (process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL) &&
-      (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY)
-    );
+    const { url, key } = this.getSupabaseCredentials();
+    const hasSupabase = !!(url && key && url.startsWith('http'));
     const hasKv = !!(
       (process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL) &&
       (process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN)
@@ -312,6 +326,23 @@ class DatabaseEngine {
   }
 
   public async testCloudConnection() {
+    const { url, key } = this.getSupabaseCredentials();
+
+    if (url && !key) {
+      return {
+        success: false,
+        provider: 'local',
+        message: 'Supabase URL was found, but your Supabase API Key (NEXT_PUBLIC_SUPABASE_ANON_KEY or SUPABASE_ANON_KEY) is missing in Vercel Environment Variables. Please add it and redeploy.',
+      };
+    }
+    if (!url && key) {
+      return {
+        success: false,
+        provider: 'local',
+        message: 'Supabase Key was found, but NEXT_PUBLIC_SUPABASE_URL is missing in Vercel Environment Variables. Please add it and redeploy.',
+      };
+    }
+
     const supabase = this.initSupabase();
     if (supabase) {
       try {
@@ -386,7 +417,7 @@ class DatabaseEngine {
     return {
       success: false,
       provider: 'local',
-      message: 'No cloud database environment variables found. On Vercel, created quizzes and student projects will be lost after page refreshes until Supabase or Vercel KV is connected.',
+      message: 'No cloud database variables detected in Vercel! In Vercel Project Settings ➔ Environment Variables, make sure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are saved for Production, then redeploy.',
     };
   }
 
