@@ -26,6 +26,8 @@ export default function AdminSettingsPage() {
   const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null);
   const [loadingStorage, setLoadingStorage] = useState(true);
   const [copiedSql, setCopiedSql] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string; provider?: string } | null>(null);
 
   const supabaseSql = `-- Run this in your Supabase SQL Editor (Takes 5 seconds):
 CREATE TABLE IF NOT EXISTS public.bhoolo_state (
@@ -34,17 +36,38 @@ CREATE TABLE IF NOT EXISTS public.bhoolo_state (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Enable RLS and grant service access
+-- Enable RLS and grant full read/write access to both anon (publishable) and service_role keys:
 ALTER TABLE public.bhoolo_state ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Service Role Full Access" ON public.bhoolo_state
-  FOR ALL TO service_role USING (true) WITH CHECK (true);
-CREATE POLICY "Public Read Access" ON public.bhoolo_state
-  FOR SELECT TO anon, authenticated USING (true);
+
+DROP POLICY IF EXISTS "Full Access to All" ON public.bhoolo_state;
+DROP POLICY IF EXISTS "Service Role Full Access" ON public.bhoolo_state;
+DROP POLICY IF EXISTS "Public Read Access" ON public.bhoolo_state;
+
+CREATE POLICY "Full Access to All" ON public.bhoolo_state
+  FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
 `;
 
   useEffect(() => {
     fetchStorageStatus();
   }, []);
+
+  const handleTestConnection = async () => {
+    try {
+      setTestingConnection(true);
+      setTestResult(null);
+      const res = await fetch('/api/admin/system/test-db');
+      const data = await res.json();
+      setTestResult(data);
+      await fetchStorageStatus();
+    } catch (e: any) {
+      setTestResult({
+        success: false,
+        message: `Failed to test connection: ${e.message}`,
+      });
+    } finally {
+      setTestingConnection(false);
+    }
+  };
 
   const fetchStorageStatus = async () => {
     try {
@@ -106,16 +129,47 @@ CREATE POLICY "Public Read Access" ON public.bhoolo_state
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={fetchStorageStatus}
-                disabled={loadingStorage}
-                className="p-2 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-slate-50 transition"
-                title="Refresh Status"
-              >
-                <RefreshCw className={`w-4 h-4 ${loadingStorage ? 'animate-spin' : ''}`} />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleTestConnection}
+                  disabled={testingConnection}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition shadow-sm disabled:opacity-50"
+                  title="Verify Read & Write Connection"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${testingConnection ? 'animate-spin' : ''}`} />
+                  <span>{testingConnection ? 'Testing...' : 'Test Cloud Connection'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={fetchStorageStatus}
+                  disabled={loadingStorage}
+                  className="p-2 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-slate-50 transition"
+                  title="Refresh Status"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loadingStorage ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
             </div>
+
+            {testResult && (
+              <div className={`p-3.5 rounded-2xl border text-xs flex items-start gap-2.5 ${
+                testResult.success 
+                  ? 'bg-emerald-50 border-emerald-300 text-emerald-900' 
+                  : 'bg-rose-50 border-rose-300 text-rose-900'
+              }`}>
+                {testResult.success ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
+                )}
+                <div>
+                  <div className="font-bold">{testResult.success ? 'Cloud Verification Passed' : 'Cloud Verification Alert'}</div>
+                  <div className="text-[11px] mt-0.5 leading-relaxed">{testResult.message}</div>
+                </div>
+              </div>
+            )}
 
             {/* Status Indicator Banner */}
             <div className={`p-4 rounded-2xl border text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
@@ -190,8 +244,9 @@ CREATE POLICY "Public Read Access" ON public.bhoolo_state
                 <p>2. In Supabase, click <strong>SQL Editor</strong>, paste the copied SQL above, and click <strong>Run</strong>.</p>
                 <p>3. In your <strong>Vercel Project Settings ➔ Environment Variables</strong>, add:</p>
                 <div className="font-mono text-[11px] bg-white p-2.5 rounded-xl border border-slate-200 text-slate-800 space-y-1">
-                  <div><strong>NEXT_PUBLIC_SUPABASE_URL</strong> = https://xxxx.supabase.co</div>
-                  <div><strong>SUPABASE_SERVICE_ROLE_KEY</strong> = your-secret-service-role-key</div>
+                  <div><strong>NEXT_PUBLIC_SUPABASE_URL</strong> = https://xxxx.supabase.co (Project URL)</div>
+                  <div><strong>NEXT_PUBLIC_SUPABASE_ANON_KEY</strong> = your-anon-publishable-key (or SUPABASE_SERVICE_ROLE_KEY)</div>
+                  <div className="text-[10px] text-slate-500 italic mt-0.5">💡 Run the SQL snippet above in Supabase SQL editor to allow instant writes for your publishable key.</div>
                 </div>
                 <p className="text-[11px] text-slate-400 pt-1">
                   💡 Alternatively, in Vercel click <strong>Storage ➔ KV</strong> to enable 1-click cloud storage without any SQL setup.

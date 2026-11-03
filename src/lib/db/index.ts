@@ -275,8 +275,14 @@ class DatabaseEngine {
   public async getStorageInfo() {
     await this.ensureLoaded();
 
-    const hasSupabase = !!(process.env.NEXT_PUBLIC_SUPABASE_URL && (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY));
-    const hasKv = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
+    const hasSupabase = !!(
+      (process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL) &&
+      (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY)
+    );
+    const hasKv = !!(
+      (process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL) &&
+      (process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN)
+    );
 
     let provider: 'supabase' | 'vercel_kv' | 'local' = 'local';
     let statusMessage = 'Local File System (Ephemeral on Vercel)';
@@ -302,6 +308,85 @@ class DatabaseEngine {
       totalAttempts: this.state.attempts.length,
       totalResults: this.state.results.length,
       totalAuditLogs: this.state.auditLogs.length,
+    };
+  }
+
+  public async testCloudConnection() {
+    const supabase = this.initSupabase();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.from('bhoolo_state').select('key').eq('key', 'main').maybeSingle();
+        if (error) {
+          return {
+            success: false,
+            provider: 'supabase',
+            message: `Supabase Table Error: "${error.message}". Did you run the SQL snippet in Supabase SQL Editor to create the "bhoolo_state" table?`,
+            code: error.code,
+          };
+        }
+
+        const { error: writeErr } = await supabase.from('bhoolo_state').upsert({
+          key: 'main',
+          data: this.state,
+          updated_at: new Date().toISOString(),
+        });
+
+        if (writeErr) {
+          return {
+            success: false,
+            provider: 'supabase',
+            message: `Supabase Write Error: "${writeErr.message}". Your RLS policy might be blocking writes. Run the updated SQL policy in Supabase SQL Editor!`,
+            code: writeErr.code,
+          };
+        }
+
+        return {
+          success: true,
+          provider: 'supabase',
+          message: 'Supabase Cloud Database verified successfully! Read & write access is working.',
+        };
+      } catch (e: any) {
+        return {
+          success: false,
+          provider: 'supabase',
+          message: `Supabase connection exception: ${e.message}`,
+        };
+      }
+    }
+
+    const kvUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+    const kvToken = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+    if (kvUrl && kvToken) {
+      try {
+        await fetch(`${kvUrl}/set/bhoolo_ping`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${kvToken}` },
+          body: 'pong',
+        });
+        const res = await fetch(`${kvUrl}/get/bhoolo_ping`, {
+          headers: { Authorization: `Bearer ${kvToken}` },
+        });
+        const json = await res.json();
+        if (json.result === 'pong') {
+          return {
+            success: true,
+            provider: 'vercel_kv',
+            message: 'Vercel KV / Upstash connected and verified! Read & write is active.',
+          };
+        }
+      } catch (e: any) {
+        return {
+          success: false,
+          provider: 'vercel_kv',
+          message: `Vercel KV connection error: ${e.message}`,
+        };
+      }
+    }
+
+    return {
+      success: false,
+      provider: 'local',
+      message: 'No cloud database environment variables found. On Vercel, created quizzes and student projects will be lost after page refreshes until Supabase or Vercel KV is connected.',
     };
   }
 
