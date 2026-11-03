@@ -116,7 +116,7 @@ CREATE POLICY "Full Access to All" ON public.bhoolo_state
 
           {/* Cloud Database Integration Status */}
           <div className="bg-white p-6 sm:p-8 rounded-3xl border border-[#E5E7EB] shadow-card space-y-5">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-3">
               <div className="flex items-center gap-3">
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
                   storageInfo?.isConnected ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
@@ -134,11 +134,11 @@ CREATE POLICY "Full Access to All" ON public.bhoolo_state
                   type="button"
                   onClick={handleTestConnection}
                   disabled={testingConnection}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition shadow-sm disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition shadow-sm disabled:opacity-50"
                   title="Verify Read & Write Connection"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${testingConnection ? 'animate-spin' : ''}`} />
-                  <span>{testingConnection ? 'Testing...' : 'Test Cloud Connection'}</span>
+                  <span>{testingConnection ? 'Testing Connection...' : 'Test Cloud Connection'}</span>
                 </button>
 
                 <button
@@ -195,11 +195,21 @@ CREATE POLICY "Full Access to All" ON public.bhoolo_state
                 </div>
               </div>
 
-              <span className={`px-3 py-1 rounded-full text-[11px] font-bold self-start sm:self-auto ${
-                storageInfo?.isConnected ? 'bg-emerald-200/80 text-emerald-800' : 'bg-amber-200/80 text-amber-800'
-              }`}>
-                {storageInfo?.provider?.toUpperCase()}
-              </span>
+              <div className="flex items-center gap-2 self-start sm:self-auto">
+                <span className={`px-3 py-1 rounded-full text-[11px] font-bold ${
+                  storageInfo?.isConnected ? 'bg-emerald-200/80 text-emerald-800' : 'bg-amber-200/80 text-amber-800'
+                }`}>
+                  {storageInfo?.provider?.toUpperCase()}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleTestConnection}
+                  disabled={testingConnection}
+                  className="px-3 py-1 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold transition shadow-sm"
+                >
+                  {testingConnection ? 'Testing...' : 'Test Now'}
+                </button>
+              </div>
             </div>
 
             {/* Synced Counts Overview */}
