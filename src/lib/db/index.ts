@@ -90,9 +90,10 @@ class DatabaseEngine {
 
     this.loadPromise = (async () => {
       try {
-        // Option 1: Supabase PostgreSQL (Cloud Database)
+        // Option 1: Supabase Cloud Database (PostgreSQL Table or Storage Bucket)
         const supabase = this.initSupabase();
         if (supabase) {
+          let tableLoaded = false;
           try {
             const { data, error } = await supabase
               .from('bhoolo_state')
@@ -100,24 +101,55 @@ class DatabaseEngine {
               .eq('key', 'main')
               .maybeSingle();
 
-            if (data && data.data && Array.isArray(data.data.students)) {
+            if (!error && data && data.data && Array.isArray(data.data.students)) {
               this.state = data.data;
               this.isLoaded = true;
-              console.log('[DatabaseEngine] Loaded live state from Supabase Cloud');
+              tableLoaded = true;
+              console.log('[DatabaseEngine] Loaded live state from Supabase Table');
               return;
-            } else if (!error) {
-              // Table exists but no record yet -> Seed initial state into Supabase
-              console.log('[DatabaseEngine] Seeding initial state to Supabase Cloud...');
+            } else if (!error && !data) {
+              console.log('[DatabaseEngine] Initializing state in Supabase Table...');
               await supabase.from('bhoolo_state').upsert({
                 key: 'main',
                 data: this.state,
                 updated_at: new Date().toISOString(),
               });
               this.isLoaded = true;
+              tableLoaded = true;
               return;
             }
           } catch (e: any) {
-            console.warn('[DatabaseEngine] Supabase read exception:', e.message);
+            console.warn('[DatabaseEngine] Supabase table read failed:', e.message);
+          }
+
+          // Fallback to Supabase Storage Bucket if table does not exist
+          if (!tableLoaded) {
+            try {
+              const { data: fileData, error: downloadError } = await supabase.storage
+                .from('bhoolo-db')
+                .download('db.json');
+
+              if (!downloadError && fileData) {
+                const text = await fileData.text();
+                const parsed = JSON.parse(text);
+                if (parsed && Array.isArray(parsed.students)) {
+                  this.state = parsed;
+                  this.isLoaded = true;
+                  console.log('[DatabaseEngine] Loaded live state from Supabase Storage bucket');
+                  return;
+                }
+              } else {
+                await supabase.storage.createBucket('bhoolo-db', { public: false }).catch(() => {});
+                await supabase.storage.from('bhoolo-db').upload('db.json', JSON.stringify(this.state, null, 2), {
+                  upsert: true,
+                  contentType: 'application/json',
+                });
+                this.isLoaded = true;
+                return;
+              }
+            } catch (storageErr: any) {
+              console.warn('[DatabaseEngine] Supabase storage read exception:', storageErr.message);
+            }
           }
         }
 
@@ -157,7 +189,7 @@ class DatabaseEngine {
           }
         }
 
-        // Option 3: Local filesystem
+        // Option 3: Local filesystem (always has 153 cohort students embedded in memory)
         this.isLoaded = true;
       } finally {
         this.loadPromise = null;
@@ -174,15 +206,30 @@ class DatabaseEngine {
     // 2. Synchronize to Supabase if available
     const supabase = this.initSupabase();
     if (supabase) {
+      let tableSaved = false;
       try {
-        await supabase.from('bhoolo_state').upsert({
+        const { error } = await supabase.from('bhoolo_state').upsert({
           key: 'main',
           data: this.state,
           updated_at: new Date().toISOString(),
         });
-        return;
+        if (!error) {
+          tableSaved = true;
+        }
       } catch (e: any) {
-        console.warn('[DatabaseEngine] Supabase cloud save warning:', e.message);
+        console.warn('[DatabaseEngine] Supabase table save warning:', e.message);
+      }
+
+      if (!tableSaved) {
+        try {
+          await supabase.storage.createBucket('bhoolo-db', { public: false }).catch(() => {});
+          await supabase.storage.from('bhoolo-db').upload('db.json', JSON.stringify(this.state, null, 2), {
+            upsert: true,
+            contentType: 'application/json',
+          });
+        } catch (storageErr: any) {
+          console.warn('[DatabaseEngine] Supabase storage save warning:', storageErr.message);
+        }
       }
     }
 
