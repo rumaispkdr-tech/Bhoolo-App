@@ -1854,6 +1854,23 @@
   "results": [],
   "auditLogs": [
     {
+      "id": "log-1793635353542-rjvu",
+      "timestamp": "2026-11-02T16:02:33.542Z",
+      "actorId": "a0000000-0000-0000-0000-000000000001",
+      "actorRole": "admin",
+      "actorName": "Dhdc",
+      "action": "AI_QUESTIONS_GENERATED",
+      "targetType": "assessment",
+      "targetId": "ai-gen",
+      "details": {
+        "questionsCount": 10,
+        "subject": "General Knowledge",
+        "fileName": "Study Notes / Text Input",
+        "assessmentType": "quiz",
+        "modelUsed": "gemini-3.5-flash"
+      }
+    },
+    {
       "id": "log-init",
       "actorId": "a0000000-0000-0000-0000-000000000001",
       "actorRole": "admin",

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { 
   AdminUser, Student, Assessment, Assignment, 
   AssessmentAttempt, AssessmentResult, AuditLog, 
@@ -11,7 +12,7 @@ import {
   INITIAL_AUDIT_LOGS 
 } from './mock-data';
 
-interface DatabaseState {
+export interface DatabaseState {
   admins: (AdminUser & { passwordHash: string })[];
   students: (Student & { passwordHash: string })[];
   assessments: Assessment[];
@@ -23,26 +24,51 @@ interface DatabaseState {
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
+// In serverless environments (Vercel), only /tmp is writable
+const TMP_FILE = path.join('/tmp', 'bhoolo_db.json');
 
 class DatabaseEngine {
   private state: DatabaseState;
+  private isLoaded: boolean = false;
+  private loadPromise: Promise<void> | null = null;
+  private supabaseClient: SupabaseClient | null = null;
 
   constructor() {
-    this.state = this.loadDatabase();
+    this.state = this.loadLocalFallback();
   }
 
-  private loadDatabase(): DatabaseState {
+  private initSupabase(): SupabaseClient | null {
+    if (this.supabaseClient) return this.supabaseClient;
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+    if (url && key && url.startsWith('http')) {
+      try {
+        this.supabaseClient = createClient(url, key, {
+          auth: { persistSession: false },
+        });
+        return this.supabaseClient;
+      } catch (e: any) {
+        console.warn('[DatabaseEngine] Failed to initialize Supabase client:', e.message);
+      }
+    }
+    return null;
+  }
+
+  private loadLocalFallback(): DatabaseState {
     try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
+      // 1. Try writable /tmp cache if present (serverless warm instance)
+      if (fs.existsSync(TMP_FILE)) {
+        const raw = fs.readFileSync(TMP_FILE, 'utf-8');
+        return JSON.parse(raw);
       }
 
+      // 2. Try repository data/db.json
       if (fs.existsSync(DB_FILE)) {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
         return JSON.parse(raw);
       }
     } catch (e) {
-      console.warn('Error reading db.json, falling back to initial data:', e);
+      console.warn('[DatabaseEngine] Error reading local db.json, falling back to initial data:', e);
     }
 
     const defaultState: DatabaseState = {
@@ -55,48 +81,212 @@ class DatabaseEngine {
       auditLogs: [...INITIAL_AUDIT_LOGS],
     };
 
-    this.saveToFile(defaultState);
     return defaultState;
   }
 
-  private save(): void {
+  public async ensureLoaded(): Promise<void> {
+    if (this.isLoaded) return;
+    if (this.loadPromise) return this.loadPromise;
+
+    this.loadPromise = (async () => {
+      try {
+        // Option 1: Supabase PostgreSQL (Cloud Database)
+        const supabase = this.initSupabase();
+        if (supabase) {
+          try {
+            const { data, error } = await supabase
+              .from('bhoolo_state')
+              .select('data')
+              .eq('key', 'main')
+              .maybeSingle();
+
+            if (data && data.data && Array.isArray(data.data.students)) {
+              this.state = data.data;
+              this.isLoaded = true;
+              console.log('[DatabaseEngine] Loaded live state from Supabase Cloud');
+              return;
+            } else if (!error) {
+              // Table exists but no record yet -> Seed initial state into Supabase
+              console.log('[DatabaseEngine] Seeding initial state to Supabase Cloud...');
+              await supabase.from('bhoolo_state').upsert({
+                key: 'main',
+                data: this.state,
+                updated_at: new Date().toISOString(),
+              });
+              this.isLoaded = true;
+              return;
+            }
+          } catch (e: any) {
+            console.warn('[DatabaseEngine] Supabase read exception:', e.message);
+          }
+        }
+
+        // Option 2: Vercel KV / Upstash Redis (1-Click Storage on Vercel)
+        const kvUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+        const kvToken = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+        if (kvUrl && kvToken) {
+          try {
+            const res = await fetch(`${kvUrl}/get/bhoolo_state`, {
+              headers: { Authorization: `Bearer ${kvToken}` },
+              cache: 'no-store',
+            });
+            const json = await res.json();
+            if (json && json.result) {
+              const loaded = typeof json.result === 'string' ? JSON.parse(json.result) : json.result;
+              if (loaded && Array.isArray(loaded.students)) {
+                this.state = loaded;
+                this.isLoaded = true;
+                console.log('[DatabaseEngine] Loaded live state from Vercel KV / Upstash');
+                return;
+              }
+            } else {
+              // Seed initial state into KV
+              await fetch(`${kvUrl}/set/bhoolo_state`, {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${kvToken}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(this.state),
+              });
+              this.isLoaded = true;
+              return;
+            }
+          } catch (e: any) {
+            console.warn('[DatabaseEngine] Vercel KV read exception:', e.message);
+          }
+        }
+
+        // Option 3: Local filesystem
+        this.isLoaded = true;
+      } finally {
+        this.loadPromise = null;
+      }
+    })();
+
+    return this.loadPromise;
+  }
+
+  private async save(): Promise<void> {
+    // 1. Write to local filesystem or /tmp for local resilience
     this.saveToFile(this.state);
+
+    // 2. Synchronize to Supabase if available
+    const supabase = this.initSupabase();
+    if (supabase) {
+      try {
+        await supabase.from('bhoolo_state').upsert({
+          key: 'main',
+          data: this.state,
+          updated_at: new Date().toISOString(),
+        });
+        return;
+      } catch (e: any) {
+        console.warn('[DatabaseEngine] Supabase cloud save warning:', e.message);
+      }
+    }
+
+    // 3. Synchronize to Vercel KV / Upstash if available
+    const kvUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+    const kvToken = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+    if (kvUrl && kvToken) {
+      try {
+        await fetch(`${kvUrl}/set/bhoolo_state`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${kvToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(this.state),
+        });
+      } catch (e: any) {
+        console.warn('[DatabaseEngine] Vercel KV cloud save warning:', e.message);
+      }
+    }
   }
 
   private saveToFile(state: DatabaseState): void {
+    // Try writing to data/db.json first (local dev)
     try {
       if (!fs.existsSync(DATA_DIR)) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
       }
       fs.writeFileSync(DB_FILE, JSON.stringify(state, null, 2), 'utf-8');
-    } catch (e) {
-      console.error('Failed to save db.json:', e);
+      return;
+    } catch {
+      // In serverless environments, DATA_DIR may be read-only
     }
+
+    // Fallback to /tmp (writable in serverless)
+    try {
+      fs.writeFileSync(TMP_FILE, JSON.stringify(state, null, 2), 'utf-8');
+    } catch (e) {
+      console.warn('[DatabaseEngine] Local file write skipped:', e);
+    }
+  }
+
+  public async getStorageInfo() {
+    await this.ensureLoaded();
+
+    const hasSupabase = !!(process.env.NEXT_PUBLIC_SUPABASE_URL && (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY));
+    const hasKv = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
+
+    let provider: 'supabase' | 'vercel_kv' | 'local' = 'local';
+    let statusMessage = 'Local File System (Ephemeral on Vercel)';
+    let isConnected = false;
+
+    if (hasSupabase) {
+      provider = 'supabase';
+      statusMessage = 'Connected to Supabase PostgreSQL Cloud';
+      isConnected = true;
+    } else if (hasKv) {
+      provider = 'vercel_kv';
+      statusMessage = 'Connected to Vercel KV / Upstash Redis';
+      isConnected = true;
+    }
+
+    return {
+      provider,
+      statusMessage,
+      isConnected,
+      totalStudents: this.state.students.length,
+      totalAssessments: this.state.assessments.length,
+      totalAssignments: this.state.assignments.length,
+      totalAttempts: this.state.attempts.length,
+      totalResults: this.state.results.length,
+      totalAuditLogs: this.state.auditLogs.length,
+    };
   }
 
   // --- ADMIN OPERATIONS ---
   async getAdminByEmail(email: string) {
+    await this.ensureLoaded();
     return this.state.admins.find(a => a.email.toLowerCase() === email.toLowerCase()) || null;
   }
 
   async getAdminByAdmission(admNumber: string) {
+    await this.ensureLoaded();
     return this.state.admins.find(a => (a.admissionNumber || '000').toUpperCase() === admNumber.toUpperCase()) || null;
   }
 
   async getAdminById(id: string) {
+    await this.ensureLoaded();
     return this.state.admins.find(a => a.id === id) || null;
   }
 
   // --- STUDENT OPERATIONS ---
   async getStudentByAdmission(admNumber: string) {
+    await this.ensureLoaded();
     return this.state.students.find(s => s.admissionNumber.toUpperCase() === admNumber.toUpperCase()) || null;
   }
 
   async getStudentById(id: string) {
+    await this.ensureLoaded();
     return this.state.students.find(s => s.id === id) || null;
   }
 
   async listStudents(filter?: { query?: string; class?: string; division?: string }) {
+    await this.ensureLoaded();
     let list = [...this.state.students];
 
     if (filter?.query) {
@@ -119,12 +309,14 @@ class DatabaseEngine {
   }
 
   async createStudent(student: Student & { passwordHash: string }) {
+    await this.ensureLoaded();
     this.state.students.push(student);
-    this.save();
+    await this.save();
     return student;
   }
 
   async bulkCreateOrUpdateStudents(students: (Student & { passwordHash: string })[]) {
+    await this.ensureLoaded();
     const created: string[] = [];
     const updated: string[] = [];
 
@@ -145,21 +337,23 @@ class DatabaseEngine {
         created.push(st.admissionNumber);
       }
     }
-    this.save();
+    await this.save();
     return { created, updated };
   }
 
   async updateStudentPassword(studentId: string, newPasswordHash: string) {
+    await this.ensureLoaded();
     const student = this.state.students.find(s => s.id === studentId);
     if (!student) return false;
     student.passwordHash = newPasswordHash;
     student.updatedAt = new Date().toISOString();
-    this.save();
+    await this.save();
     return true;
   }
 
   // --- ASSESSMENT OPERATIONS ---
   async listAssessments(type?: 'quiz' | 'exam') {
+    await this.ensureLoaded();
     let list = this.state.assessments;
     if (type) {
       list = list.filter(a => a.type === type);
@@ -177,6 +371,7 @@ class DatabaseEngine {
   }
 
   async getAssessmentById(id: string, includeAnswers = true) {
+    await this.ensureLoaded();
     const assessment = this.state.assessments.find(a => a.id === id);
     if (!assessment) return null;
 
@@ -200,6 +395,7 @@ class DatabaseEngine {
   }
 
   async createAssessment(assessment: Assessment) {
+    await this.ensureLoaded();
     this.state.assessments.unshift(assessment);
     this.addAuditLog({
       actorId: 'a0000000-0000-0000-0000-000000000001',
@@ -210,11 +406,12 @@ class DatabaseEngine {
       targetId: assessment.id,
       details: { title: assessment.title, subject: assessment.subject, totalMarks: assessment.totalMarks },
     });
-    this.save();
+    await this.save();
     return assessment;
   }
 
   async updateAssessment(id: string, updates: Partial<Assessment>) {
+    await this.ensureLoaded();
     const idx = this.state.assessments.findIndex(a => a.id === id);
     if (idx < 0) return null;
 
@@ -222,22 +419,24 @@ class DatabaseEngine {
       ...this.state.assessments[idx],
       ...updates,
     };
-    this.save();
+    await this.save();
     return this.state.assessments[idx];
   }
 
   async deleteAssessment(id: string) {
+    await this.ensureLoaded();
     const idx = this.state.assessments.findIndex(a => a.id === id);
     if (idx < 0) return false;
 
     this.state.assessments.splice(idx, 1);
     this.state.assignments = this.state.assignments.filter(asg => asg.assessmentId !== id);
-    this.save();
+    await this.save();
     return true;
   }
 
   // --- ASSIGNMENT OPERATIONS ---
   async listAssignments(assessmentId?: string) {
+    await this.ensureLoaded();
     let list = [...this.state.assignments];
     if (assessmentId) {
       list = list.filter(a => a.assessmentId === assessmentId);
@@ -255,6 +454,7 @@ class DatabaseEngine {
   }
 
   async getAssignmentsByStudentId(studentId: string) {
+    await this.ensureLoaded();
     const assignments = this.state.assignments.filter(a => a.studentId === studentId);
     return assignments.map(asg => {
       const assessment = this.state.assessments.find(a => a.id === asg.assessmentId);
@@ -272,6 +472,7 @@ class DatabaseEngine {
     timeLimitMinutes?: number;
     attemptLimit?: number;
   }) {
+    await this.ensureLoaded();
     const { assessmentId, studentIds, deadline, timeLimitMinutes, attemptLimit = 1 } = params;
     const added: Assignment[] = [];
 
@@ -317,12 +518,13 @@ class DatabaseEngine {
       },
     });
 
-    this.save();
+    await this.save();
     return added;
   }
 
   // --- ATTEMPT & QUIZ/EXAM SESSIONS ---
   async startAttempt(assignmentId: string, studentId: string) {
+    await this.ensureLoaded();
     const assignment = this.state.assignments.find(a => a.id === assignmentId && a.studentId === studentId);
     if (!assignment) {
       throw new Error('Assignment not found');
@@ -386,12 +588,13 @@ class DatabaseEngine {
 
     assignment.status = 'in_progress';
     this.state.attempts.push(newAttempt);
-    this.save();
+    await this.save();
 
     return { attempt: newAttempt, assessment };
   }
 
   async freezeAttempt(attemptId: string, studentId: string, reason?: string) {
+    await this.ensureLoaded();
     const attempt = this.state.attempts.find(a => a.id === attemptId && a.studentId === studentId);
     if (!attempt || attempt.status === 'submitted' || attempt.status === 'auto_submitted') {
       return null;
@@ -425,18 +628,19 @@ class DatabaseEngine {
       },
     });
 
-    this.save();
+    await this.save();
     return attempt;
   }
 
   async unfreezeAttempt(identifier: string) {
+    await this.ensureLoaded();
     const attempt = this.state.attempts.find(a => a.id === identifier || a.assignmentId === identifier);
     if (!attempt) {
       // Also check if assignment itself is frozen
       const asg = this.state.assignments.find(a => a.id === identifier);
       if (asg) {
         asg.status = 'in_progress';
-        this.save();
+        await this.save();
         return null;
       }
       throw new Error('Attempt or assignment not found');
@@ -468,11 +672,12 @@ class DatabaseEngine {
       },
     });
 
-    this.save();
+    await this.save();
     return attempt;
   }
 
   async getAttemptStatus(attemptId: string, studentId: string) {
+    await this.ensureLoaded();
     const attempt = this.state.attempts.find(a => a.id === attemptId && a.studentId === studentId);
     if (!attempt) return null;
     return {
@@ -490,6 +695,7 @@ class DatabaseEngine {
     questionId: string;
     selectedOptionKey: 'A' | 'B' | 'C' | 'D';
   }) {
+    await this.ensureLoaded();
     const { attemptId, studentId, questionId, selectedOptionKey } = params;
 
     const attempt = this.state.attempts.find(a => a.id === attemptId && a.studentId === studentId);
@@ -549,7 +755,7 @@ class DatabaseEngine {
       attempt.answers.push(answerRecord);
     }
 
-    this.save();
+    await this.save();
 
     return {
       answer: answerRecord,
@@ -565,6 +771,7 @@ class DatabaseEngine {
   }
 
   async submitAttempt(attemptId: string, studentId: string, autoSubmitted = false) {
+    await this.ensureLoaded();
     const attempt = this.state.attempts.find(a => a.id === attemptId && a.studentId === studentId);
     if (!attempt) {
       throw new Error('Attempt not found');
@@ -711,13 +918,14 @@ class DatabaseEngine {
       },
     });
 
-    this.save();
+    await this.save();
 
     return { attempt, result: resultRecord };
   }
 
   // --- RESULTS & ANALYTICS ---
   async getResultByAttemptId(attemptId: string) {
+    await this.ensureLoaded();
     const result = this.state.results.find(r => r.attemptId === attemptId);
     if (!result) return null;
 
@@ -732,6 +940,7 @@ class DatabaseEngine {
   }
 
   async getResultById(id: string) {
+    await this.ensureLoaded();
     const result = this.state.results.find(r => r.id === id);
     if (!result) return null;
 
@@ -746,6 +955,7 @@ class DatabaseEngine {
   }
 
   async getResultByAssignmentId(assignmentId: string) {
+    await this.ensureLoaded();
     const result = this.state.results.find(r => r.assignmentId === assignmentId);
     if (!result) return null;
 
@@ -760,6 +970,7 @@ class DatabaseEngine {
   }
 
   async listResults(filter?: { studentId?: string; assessmentId?: string }) {
+    await this.ensureLoaded();
     let list = this.state.results;
     if (filter?.studentId) {
       list = list.filter(r => r.studentId === filter.studentId);
@@ -795,10 +1006,12 @@ class DatabaseEngine {
   }
 
   async listAuditLogs() {
+    await this.ensureLoaded();
     return this.state.auditLogs || [];
   }
 
   async getAdminStats() {
+    await this.ensureLoaded();
     const totalStudents = this.state.students.length;
     const totalQuizzes = this.state.assessments.filter(a => a.type === 'quiz').length;
     const totalExaminations = this.state.assessments.filter(a => a.type === 'exam').length;
